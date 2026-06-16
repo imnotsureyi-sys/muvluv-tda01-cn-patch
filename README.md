@@ -1,5 +1,12 @@
 # Muv-Luv Unlimited: THE DAY AFTER TDA01 简体中文补丁 Beta 0.1
 
+## 下载
+
+- [点这里直接下载补丁 zip](https://github.com/imnotsureyi-sys/muvluv-tda01-cn-patch/releases/download/tda01-beta0.1/MuvLuv_TDA01_CN_Patch_beta0.1.zip)
+- [查看 GitHub Release 页面](https://github.com/imnotsureyi-sys/muvluv-tda01-cn-patch/releases/tag/tda01-beta0.1)
+
+> 目前只公开发布 TDA01。TDA02 / TDA03 还在整理和校对中，暂不发布。
+
 这是 Muv-Luv Unlimited: THE DAY AFTER TDA01 的非官方、非商业简体中文测试补丁，仅供正版 Steam 玩家交流使用。
 
 ## 下载文件
