@@ -59,6 +59,16 @@ git switch chapter/tda03
 git status --short
 ```
 
+如果 `git status --short` 显示已有未提交修改，先停下来告诉用户。不要覆盖、不要 `git reset`、不要 `git checkout` 丢弃这些修改。
+
+工作区干净后再拉取对应分支：
+
+```powershell
+git pull origin chapter/tda01
+```
+
+按当前章节把分支名替换为 `chapter/tda02` 或 `chapter/tda03`。
+
 ## 章节对话结束时
 
 先查看修改：
@@ -107,4 +117,3 @@ git push origin tda02-beta0.1
 ```
 
 zip 包仍然通过 GitHub Release 附件上传，不提交进 Git。
-
