@@ -1,0 +1,7 @@
+* text=auto
+*.csv text
+*.tsv text
+*.md text
+*.py text
+*.ps1 text
+*.bat text eol=crlf

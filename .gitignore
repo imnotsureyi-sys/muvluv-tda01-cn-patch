@@ -1,0 +1,49 @@
+# Large/generated package outputs
+dist/
+release/
+release_v0.9/
+
+# Repacked game script outputs and extracted game data
+outputs/repack_*/
+outputs/tda_fpd_extract/
+outputs/cache_backup_*/
+outputs/movie_probe*/
+workspace_full_copy_20260615/
+
+# Keep only current source CSVs from outputs/tda_text
+outputs/tda_text/*
+!outputs/tda_text/
+!outputs/tda_text/tda01_deepseek_full.csv
+!outputs/tda_text/tda02_deepseek_full.csv
+!outputs/tda_text/tda03_deepseek_full.csv
+
+# Keep glossary current files, ignore backups
+outputs/glossary/*.backup*
+outputs/glossary/*.bak
+
+# Keep font payloads in release zips; avoid putting large font binaries in git history
+assets/fonts/*.otf
+
+# QA reports are generated artifacts
+outputs/qa/
+outputs/*.json
+
+# Old archived scripts and experiments
+work_archive_20260617/
+review/
+
+# Dependency/cache folders
+node_modules/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Spreadsheet and temporary office lock files
+~$*
+*.tmp
+
+# Local logs / scratch
+*.log
+
+# Generated release archives should be attached to GitHub Releases, not committed
+*.zip
