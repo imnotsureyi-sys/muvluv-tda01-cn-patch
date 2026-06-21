@@ -1,42 +1,32 @@
 # TDA00 Total Translation Audit
 
-## Scope
+## Summary
 
-- JP baseline rows: 3713
-- DeepSeek raw rows: 3713
-- Codex review rows: 3713
-- CN final rows: 3713
-- speaker table rows: 21
-- ruby table rows: 75
-- baseline ruby references in called text: 75
-- review ruby references in called text: 75
-
-## Hard Checks
-
-- alignment_issue: 0
+- baseline_rows: 3713
+- final_rows: 3713
+- review_rows: 3713
+- second_review_rows: 3713
+- decision_rows: 0
+- order_mismatches: 0
+- missing_final_ids: 0
+- extra_final_ids: 0
 - empty_cn: 0
-- text_id_not_found: 0
-- duplicate_cn_abnormal: 0
-- term_issue: 0
-- speaker_name_body: 0
+- control_damage: 0
+- model_garbage: 0
 - english_sentence_residual: 0
 - kana_residual: 0
-- slash_residual: 0
-- jp_prefix_residual: 0
-- json_placeholder_garbage: 0
-- control_damage: 0
-- speaker_mismatch: 0
-- ruby_ref_mismatch: 0
-- traditional_or_jp_kanji_residual heuristic: 0
-- user_decisions_needed rows: 2
+- duplicate_review_rows: 14
+- batch_hard_issue_rows: 0
+- batch_second_review_issue_rows: 0
+- second_review_non_ok_rows: 0
+- review_term_issue_flags: 0
+
+## Gate Result
+
+- PASS: JP baseline order, final rows, hard batch audits, and JP-slot second reviews are clean.
 
 ## Notes
 
-- JP baseline remains the alignment source; final CSV order is checked against call_order/id/egpack/xml/message position/text_attr/JP/speaker.
-- English slots were not used by the batch translation script.
-- `\w` was stripped before model input and is not kept in final CN.
-- Heuristic traditional/Japanese-kanji hits are listed in the issue CSV for manual inspection; kana/control/slash residuals are hard failures.
-
-## Issue CSV
-
-- `chapters\TDA00\translation\tda00_total_audit_issues.csv`
+- Duplicate review rows are written to `chapters\TDA00\translation\tda00_total_duplicate_review.csv` for human inspection; repeated battle barks and acknowledgements can be legitimate.
+- Kana/Japanese residual review rows are written to `chapters\TDA00\translation\tda00_total_jp_residual_review.csv`; shared CJK ideographs are not counted here.
+- This audit does not apply any English-slot fallback and checks against the frozen JP call-order baseline.

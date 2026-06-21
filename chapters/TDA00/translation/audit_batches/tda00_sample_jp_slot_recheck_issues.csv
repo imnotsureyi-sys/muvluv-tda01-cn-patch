@@ -1,0 +1,23 @@
+﻿sample_no,call_order,id,egpack,scene,speaker_jp,jp,cn_final,category,detail
+51,20,game_t00019,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,,―\w―\w変わらぬ空を、\w今日も飛ぶ。,―\w―\w一成不变的天空，\w今天也继续飞行。,call_order_not_increasing,269 -> 20
+38,257,game_t00256,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+42,261,game_t00260,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ダリル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+44,263,game_t00262,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,,…\w…\w…\w…\w！,…\w…\w…\w…\w！,duplicate_cn_suspect,normalized CN duplicated count=19
+48,267,game_t00266,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+49,268,game_t00267,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ダリル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+54,23,game_t00022,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,少尉,「ナイヴス２了解」,「黑刃2，了解。」,duplicate_cn_suspect,normalized CN duplicated count=2
+55,24,game_t00023,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,少尉,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+76,45,game_t00044,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+93,62,game_t00061,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+99,68,game_t00067,020_UAF_DAY91_01.egpack,020_UAF_DAY91_01,ウィル,「ナイヴス２了解」,「黑刃2了解」,duplicate_cn_suspect,normalized CN duplicated count=2
+123,698,game_t00697,030_UAF_DAY93_01.egpack,030_UAF_DAY93_01,リリア,「…\w…\w…\w…\w！」,「…\w…\w…\w…\w！」,duplicate_cn_suspect,normalized CN duplicated count=19
+131,706,game_t00705,030_UAF_DAY93_01.egpack,030_UAF_DAY93_01,ダリル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+132,707,game_t00706,030_UAF_DAY93_01.egpack,030_UAF_DAY93_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+142,717,game_t00716,030_UAF_DAY93_01.egpack,030_UAF_DAY93_01,リリア,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+147,722,game_t00721,030_UAF_DAY93_01.egpack,030_UAF_DAY93_01,リリア,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+151,1497,game_t01496,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+153,1499,game_t01498,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,ウィル,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+177,1523,game_t01522,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,リリア,「…\w…\w…\w…\w！」,「…\w…\w…\w…\w！」,duplicate_cn_suspect,normalized CN duplicated count=19
+183,1529,game_t01528,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,リリア,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+192,1538,game_t01537,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,リリア,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
+200,1546,game_t01545,040_UAF_DAY94_01.egpack,040_UAF_DAY94_01,リリア,「…\w…\w…\w…\w」,「…\w…\w…\w…\w」,duplicate_cn_suspect,normalized CN duplicated count=19
