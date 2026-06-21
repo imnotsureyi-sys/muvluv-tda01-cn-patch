@@ -12,6 +12,7 @@
 - extra_final_ids: 0
 - empty_cn: 0
 - control_damage: 0
+- newline_damage: 0
 - model_garbage: 0
 - english_sentence_residual: 0
 - kana_residual: 0
@@ -29,4 +30,5 @@
 
 - Duplicate review rows are written to `chapters\TDA00\translation\tda00_total_duplicate_review.csv` for human inspection; repeated battle barks and acknowledgements can be legitimate.
 - Kana/Japanese residual review rows are written to `chapters\TDA00\translation\tda00_total_jp_residual_review.csv`; shared CJK ideographs are not counted here.
+- Final-CN newline damage rows are written to `chapters\TDA00\translation\tda00_total_newline_review.csv`; real newlines render as square glyphs in-game.
 - This audit does not apply any English-slot fallback and checks against the frozen JP call-order baseline.
