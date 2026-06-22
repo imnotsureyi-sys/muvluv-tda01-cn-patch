@@ -1,20 +1,32 @@
 # TDA02
 
-当前状态：测试中。
+当前整理版：`latest`
 
-当前测试包：
+可直接测试的补丁目录：
 
-- `dist/MuvLuv_TDA02_CN_Patch_beta0.1.zip`
+- `chapters/TDA02/latest`
 
-当前源文件：
+压缩包：
 
-- `outputs/tda_text/tda02_deepseek_full.csv`
+- `chapters/TDA02/dist/Muv-Luv_TDA02_CN_latest.zip`
 
-当前 repack：
+内容范围：
 
-- `outputs/repack_tda02_xmlsafe_20260617o`
+- TDA02 简体中文文本。
+- 已验证的字体与设置界面文本。
+- 章节名文本汉化。
+- 开头演出透明字幕图片汉化。
+- 开幕免责声明图汉化，并加入非商业声明、致谢和反馈群信息。
+- 其他 UI 图片槽位改用官方英文资源。
+- 角色语音名图使用简体中文全称。
 
-详细交接见：
+安装方式：
 
-- `handoff/TDA02_CONTEXT.md`
+- 一键安装：解压后运行 `install.bat`。
+- 手动安装：见 `latest/MANUAL_INSTALL.md`。
 
+注意：
+
+- 安装后需要完全退出游戏再重新启动 TDA02。
+- 只返回标题或重新读档，UI、图片和字体缓存不一定刷新。
+- 这个目录是 TDA02 专用，不要覆盖到 TDA00/TDA01/TDA03。
