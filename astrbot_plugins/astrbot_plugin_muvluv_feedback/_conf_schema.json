@@ -1,23 +1,56 @@
 {
   "csv_paths": {
-    "description": "TDA00-03 ParaTranz CSV 路径",
+    "description": "TDA00-03 原始 JP/CN 对照表路径",
     "type": "list",
-    "hint": "每个 CSV 应为三列：key, JP, CN。key 形如 TDA02|xxx.egpack|game_t00000。",
+    "hint": "优先使用 latest_compare_tables 下的 compare 表，字段包含 call_order/id/egpack/scene/speaker_jp/jp_text/cn_text/review_status/audit_flags。",
     "default": [
-      "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA00_PARATRANZ_utf8bom_2026.6.23.csv",
-      "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA01_PARATRANZ_utf8bom_2026.6.23.csv",
-      "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA02_PARATRANZ_utf8bom_2026.6.23.csv",
-      "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA03_PARATRANZ_utf8bom_2026.6.23.csv"
+      "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA00_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+      "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA01_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+      "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA02_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+      "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA03_JP_CN_COMPARE_utf8bom_2026.6.23.csv"
     ]
+  },
+  "paratranz_base_ids": {
+    "description": "ParaTranz 每章首条词条 ID",
+    "type": "object",
+    "hint": "ParaTranz ID = 章节起点 + call_order - 1。",
+    "items": {
+      "TDA00": {
+        "description": "TDA00 首条 ParaTranz ID",
+        "type": "int",
+        "default": 990024132
+      },
+      "TDA01": {
+        "description": "TDA01 首条 ParaTranz ID",
+        "type": "int",
+        "default": 990027845
+      },
+      "TDA02": {
+        "description": "TDA02 首条 ParaTranz ID",
+        "type": "int",
+        "default": 990036410
+      },
+      "TDA03": {
+        "description": "TDA03 首条 ParaTranz ID",
+        "type": "int",
+        "default": 990042999
+      }
+    }
   },
   "glossary_paths": {
     "description": "术语表 CSV 路径",
     "type": "list",
-    "hint": "可选。用于在回复里附带相关术语，不用于替代 JP 判断。",
+    "hint": "用于辅助判断术语一致性；不会使用英文槽或旧中文兜底。",
     "default": [
       "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/muvluv_lunatranslator_full_glossary.csv",
       "C:/Users/Administrator/Documents/Muv-LuvSeries汉化/outputs/glossary/muvluv_jp_cn_terms.csv"
     ]
+  },
+  "review_provider_id": {
+    "description": "翻译反馈判定模型",
+    "type": "string",
+    "hint": "普通聊天可用 flash；反馈判定建议固定使用 pro。",
+    "default": "deepseek/deepseek-v4-pro"
   },
   "vision_provider_id": {
     "description": "图片文字识别模型",
@@ -34,13 +67,13 @@
   "auto_trigger_enabled": {
     "description": "自动识别群友翻译反馈",
     "type": "bool",
-    "hint": "开启后，图片或文字消息里出现“这里好像有问题、翻译错了、这句不对”等反馈语气时会自动定位，不需要 /反馈。",
+    "hint": "开启后，@机器人 + 图片 会自动进入反馈定位；/反馈 仍然强制触发。",
     "default": true
   },
   "enable_llm_review": {
-    "description": "启用基于 JP 的模型判定",
+    "description": "启用基于 JP 与上下文的模型判定",
     "type": "bool",
-    "hint": "开启后，定位到唯一条目时会让当前对话模型判断是否建议修改并给出建议 CN。",
+    "hint": "定位到条目后使用 review_provider_id 判定是否修改、疑问或无需处理。",
     "default": true
   },
   "queue_filename": {
@@ -52,7 +85,37 @@
   "resolution_filename": {
     "description": "已处理反馈记录表文件名",
     "type": "string",
-    "hint": "命中 key + 文件 + JP/CN 后，机器人会返回已处理过及具体内容。",
+    "hint": "命中 key + 文件 + JP/CN 后，机器人会返回已处理过或疑问状态。",
     "default": "feedback_resolution_table.csv"
+  },
+  "line_catalog_filename": {
+    "description": "台词主表文件名",
+    "type": "string",
+    "hint": "包含 call_order/id/egpack/scene/speaker/paratranz_id/反馈检查状态。",
+    "default": "line_catalog.csv"
+  },
+  "sync_task_filename": {
+    "description": "ParaTranz 同步任务表文件名",
+    "type": "string",
+    "hint": "确定修改或疑问时生成待同步任务，供后续 Chrome 同步流程使用。",
+    "default": "paratranz_sync_tasks.csv"
+  },
+  "speaker_profile_filename": {
+    "description": "人物资料表文件名",
+    "type": "string",
+    "hint": "可补充 speaker 性格、语气、说话风格、翻译注意事项。",
+    "default": "speaker_profiles.csv"
+  },
+  "scene_context_filename": {
+    "description": "场景资料表文件名",
+    "type": "string",
+    "hint": "可按 egpack 或 call_order 区间补充故事梗概、地点、氛围、当前情景。",
+    "default": "scene_contexts.csv"
+  },
+  "speaker_relationship_filename": {
+    "description": "人物关系表文件名",
+    "type": "string",
+    "hint": "可补充 speaker 之间的关系和章节范围。",
+    "default": "speaker_relationships.csv"
   }
 }

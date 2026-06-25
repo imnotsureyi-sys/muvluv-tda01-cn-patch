@@ -17,11 +17,11 @@ from astrbot.api.star import Context, Star, register
 from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
 
 
-DEFAULT_CSV_PATHS = [
-    "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA00_PARATRANZ_utf8bom_2026.6.23.csv",
-    "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA01_PARATRANZ_utf8bom_2026.6.23.csv",
-    "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA02_PARATRANZ_utf8bom_2026.6.23.csv",
-    "C:/Users/Administrator/Desktop/TDA00_03_PARATRANZ_import_csv/TDA03_PARATRANZ_utf8bom_2026.6.23.csv",
+DEFAULT_COMPARE_PATHS = [
+    "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA00_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+    "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA01_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+    "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA02_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
+    "C:/Users/Administrator/Desktop/TDA00_03_latest_compare_tables/TDA03_JP_CN_COMPARE_utf8bom_2026.6.23.csv",
 ]
 
 DEFAULT_GLOSSARY_PATHS = [
@@ -29,17 +29,30 @@ DEFAULT_GLOSSARY_PATHS = [
     "C:/Users/Administrator/Documents/Muv-LuvSeries汉化/outputs/glossary/muvluv_jp_cn_terms.csv",
 ]
 
+DEFAULT_PARATRANZ_BASE_IDS = {
+    "TDA00": 990024132,
+    "TDA01": 990027845,
+    "TDA02": 990036410,
+    "TDA03": 990042999,
+}
+
 
 @dataclass
 class TranslationRow:
     source_file: str
     csv_line: int
+    call_order: int
     key: str
     chapter: str
     egpack: str
+    scene: str
+    speaker_jp: str
     row_id: str
     jp_text: str
     cn_text: str
+    review_status: str
+    audit_flags: str
+    paratranz_id: str
     jp_norm: str
     cn_norm: str
 
@@ -53,9 +66,15 @@ class MatchResult:
 
 
 class TranslationIndex:
-    def __init__(self, csv_paths: list[str], glossary_paths: list[str]) -> None:
+    def __init__(
+        self,
+        csv_paths: list[str],
+        glossary_paths: list[str],
+        paratranz_base_ids: dict[str, int] | None = None,
+    ) -> None:
         self.csv_paths = csv_paths
         self.glossary_paths = glossary_paths
+        self.paratranz_base_ids = paratranz_base_ids or DEFAULT_PARATRANZ_BASE_IDS
         self.rows: list[TranslationRow] = []
         self.by_key: dict[str, TranslationRow] = {}
         self.by_id: dict[str, list[TranslationRow]] = {}
@@ -150,6 +169,18 @@ class TranslationIndex:
                 break
         return hits
 
+    def context_window(self, row: TranslationRow, before: int = 3, after: int = 3) -> list[TranslationRow]:
+        position = self.row_positions.get(row.key)
+        if position is None:
+            return []
+        start = max(0, position - before)
+        end = min(len(self.rows), position + after + 1)
+        return [
+            item
+            for item in self.rows[start:end]
+            if item.chapter == row.chapter and item.egpack == row.egpack
+        ]
+
     def _search_direct_key(self, text: str) -> list[MatchResult]:
         results: list[MatchResult] = []
         full_keys = re.findall(r"TDA\d{2}\|.+?\.egpack\|[A-Za-z0-9_]+", text)
@@ -176,32 +207,96 @@ class TranslationIndex:
             return
         try:
             with csv_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                first_line = handle.readline()
+                handle.seek(0)
+                header = [item.strip() for item in next(csv.reader([first_line]))] if first_line else []
+                if {"id", "jp_text", "cn_text"}.issubset(set(header)):
+                    reader = csv.DictReader(handle)
+                    for line_no, record in enumerate(reader, start=2):
+                        item = self._row_from_compare_record(csv_path, line_no, record)
+                        if item:
+                            self._add_row(item)
+                    return
+
                 reader = csv.reader(handle)
                 for line_no, row in enumerate(reader, start=1):
-                    if len(row) < 3:
-                        continue
-                    key, jp_text, cn_text = row[0].strip(), row[1].strip(), row[2].strip()
-                    parts = key.split("|", 2)
-                    if len(parts) != 3:
-                        continue
-                    item = TranslationRow(
-                        source_file=str(csv_path),
-                        csv_line=line_no,
-                        key=key,
-                        chapter=parts[0],
-                        egpack=parts[1],
-                        row_id=parts[2],
-                        jp_text=jp_text,
-                        cn_text=cn_text,
-                        jp_norm=normalize_text(jp_text),
-                        cn_norm=normalize_text(cn_text),
-                    )
-                    self.rows.append(item)
-                    self.by_key[item.key] = item
-                    self.by_id.setdefault(item.row_id.lower(), []).append(item)
-                    self.row_positions[item.key] = len(self.rows) - 1
+                    item = self._row_from_paratranz_record(csv_path, line_no, row)
+                    if item:
+                        self._add_row(item)
         except Exception as exc:
             logger.error("[muvluv_feedback] failed to load %s: %s", path, exc)
+
+    def _row_from_compare_record(
+        self,
+        csv_path: Path,
+        line_no: int,
+        record: dict[str, str],
+    ) -> TranslationRow | None:
+        chapter = infer_chapter_from_path(csv_path)
+        row_id = str(record.get("id", "")).strip()
+        egpack = str(record.get("egpack", "")).strip()
+        jp_text = str(record.get("jp_text", "")).strip()
+        cn_text = str(record.get("cn_text", "")).strip()
+        if not chapter or not row_id or not egpack:
+            return None
+        call_order = safe_int(record.get("call_order", ""), line_no - 1)
+        key = f"{chapter}|{egpack}|{row_id}"
+        return TranslationRow(
+            source_file=str(csv_path),
+            csv_line=line_no,
+            call_order=call_order,
+            key=key,
+            chapter=chapter,
+            egpack=egpack,
+            scene=str(record.get("scene", "")).strip(),
+            speaker_jp=str(record.get("speaker_jp", "")).strip(),
+            row_id=row_id,
+            jp_text=jp_text,
+            cn_text=cn_text,
+            review_status=str(record.get("review_status", "")).strip(),
+            audit_flags=str(record.get("audit_flags", "")).strip(),
+            paratranz_id=compute_paratranz_id(chapter, call_order, self.paratranz_base_ids),
+            jp_norm=normalize_text(jp_text),
+            cn_norm=normalize_text(cn_text),
+        )
+
+    def _row_from_paratranz_record(
+        self,
+        csv_path: Path,
+        line_no: int,
+        row: list[str],
+    ) -> TranslationRow | None:
+        if len(row) < 3:
+            return None
+        key, jp_text, cn_text = row[0].strip(), row[1].strip(), row[2].strip()
+        parts = key.split("|", 2)
+        if len(parts) != 3:
+            return None
+        chapter, egpack, row_id = parts
+        return TranslationRow(
+            source_file=str(csv_path),
+            csv_line=line_no,
+            call_order=line_no,
+            key=key,
+            chapter=chapter,
+            egpack=egpack,
+            scene="",
+            speaker_jp="",
+            row_id=row_id,
+            jp_text=jp_text,
+            cn_text=cn_text,
+            review_status="",
+            audit_flags="",
+            paratranz_id=compute_paratranz_id(chapter, line_no, self.paratranz_base_ids),
+            jp_norm=normalize_text(jp_text),
+            cn_norm=normalize_text(cn_text),
+        )
+
+    def _add_row(self, item: TranslationRow) -> None:
+        self.rows.append(item)
+        self.by_key[item.key] = item
+        self.by_id.setdefault(item.row_id.lower(), []).append(item)
+        self.row_positions[item.key] = len(self.rows) - 1
 
     def _load_glossary(self) -> None:
         self.glossary.clear()
@@ -235,7 +330,7 @@ class TranslationIndex:
 @register(
     "astrbot_plugin_muvluv_feedback",
     "Codex",
-    "Locate Muv-Luv translation feedback against JP/CN ParaTranz CSV rows.",
+    "Locate Muv-Luv translation feedback against JP/CN compare table rows.",
     "0.1.0",
 )
 class MuvLuvFeedbackPlugin(Star):
@@ -244,8 +339,9 @@ class MuvLuvFeedbackPlugin(Star):
         self.context = context
         self.config = config or {}
         self.index = TranslationIndex(
-            self._list("csv_paths", DEFAULT_CSV_PATHS),
+            self._list("csv_paths", DEFAULT_COMPARE_PATHS),
             self._list("glossary_paths", DEFAULT_GLOSSARY_PATHS),
+            self._dict_int("paratranz_base_ids", DEFAULT_PARATRANZ_BASE_IDS),
         )
         data_dir = Path(get_astrbot_plugin_data_path()) / "astrbot_plugin_muvluv_feedback"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -254,8 +350,27 @@ class MuvLuvFeedbackPlugin(Star):
             "resolution_filename",
             "feedback_resolution_table.csv",
         )
+        self.catalog_path = data_dir / self._str("line_catalog_filename", "line_catalog.csv")
+        self.sync_task_path = data_dir / self._str("sync_task_filename", "paratranz_sync_tasks.csv")
+        self.speaker_profile_path = data_dir / self._str(
+            "speaker_profile_filename",
+            "speaker_profiles.csv",
+        )
+        self.scene_context_path = data_dir / self._str(
+            "scene_context_filename",
+            "scene_contexts.csv",
+        )
+        self.relationship_path = data_dir / self._str(
+            "speaker_relationship_filename",
+            "speaker_relationships.csv",
+        )
         self._ensure_queue_file()
         self._ensure_resolution_file()
+        self._ensure_catalog_file()
+        self._ensure_sync_task_file()
+        self._ensure_speaker_profile_file()
+        self._ensure_scene_context_file()
+        self._ensure_relationship_file()
         logger.info("[muvluv_feedback] plugin initialized")
 
     @filter.command("反馈", alias={"翻译反馈", "查翻译", "定位翻译", "muvluv_feedback"})
@@ -339,6 +454,17 @@ class MuvLuvFeedbackPlugin(Star):
         for unit, match in located:
             review = reviews.get(match.row.key, "")
             decision, suggested_cn, reason = parse_review_fields(review)
+            side_effect_note = self._apply_review_result(
+                event=event,
+                raw_feedback=unit,
+                image_text=image_text,
+                match=match,
+                decision=decision,
+                suggested_cn=suggested_cn,
+                reason=reason or review,
+            )
+            if side_effect_note:
+                review = f"{review}\n{side_effect_note}" if review else side_effect_note
             self._append_queue(
                 event=event,
                 raw_feedback=unit,
@@ -383,7 +509,7 @@ class MuvLuvFeedbackPlugin(Star):
             match=None,
             decision="定位不足",
             suggested_cn="",
-            reason="未在 TDA00-03 ParaTranz CSV 中找到精确匹配。",
+            reason="未在 TDA00-03 JP/CN compare 表中找到精确匹配。",
         )
         return (
             "没有定位到精确 id。\n"
@@ -449,6 +575,9 @@ class MuvLuvFeedbackPlugin(Star):
             yield event.plain_result("只有管理员可以重载反馈索引。").stop_event()
             return
         self.index.load()
+        self._ensure_catalog_file(refresh=True)
+        self._ensure_speaker_profile_file(refresh=True)
+        self._ensure_scene_context_file(refresh=True)
         yield event.plain_result(f"已重载索引：{len(self.index.rows)} 条。").stop_event()
 
     @filter.command("反馈处理表", alias={"反馈记录表", "翻译反馈处理表"})
@@ -462,6 +591,19 @@ class MuvLuvFeedbackPlugin(Star):
                 count = 0
         yield event.plain_result(
             f"当前已处理反馈记录：{count} 条\n{self.resolution_path}"
+        ).stop_event()
+
+    @filter.command("反馈工作表", alias={"翻译反馈工作表", "反馈表格"})
+    async def feedback_workbooks(self, event: AstrMessageEvent):
+        yield event.plain_result(
+            "反馈工作表：\n"
+            f"台词主表：{self.catalog_path}\n"
+            f"反馈队列：{self.queue_path}\n"
+            f"已处理表：{self.resolution_path}\n"
+            f"ParaTranz 同步任务：{self.sync_task_path}\n"
+            f"人物资料：{self.speaker_profile_path}\n"
+            f"场景资料：{self.scene_context_path}\n"
+            f"人物关系：{self.relationship_path}"
         ).stop_event()
 
     async def _extract_image_text(self, event: AstrMessageEvent) -> str:
@@ -511,14 +653,20 @@ class MuvLuvFeedbackPlugin(Star):
             raise RuntimeError(f"未找到可用图片识别模型：{provider_id or '<empty>'}")
         return provider
 
+    def _get_review_provider_id(self, event: AstrMessageEvent) -> str:
+        provider_id = self._str("review_provider_id", "deepseek/deepseek-v4-pro").strip()
+        if provider_id:
+            return provider_id
+        provider = self.context.get_using_provider(umo=event.unified_msg_origin)
+        return str(getattr(provider, "provider_config", {}).get("id") or "")
+
     async def _review_with_llm(
         self,
         event: AstrMessageEvent,
         raw_feedback: str,
         match: MatchResult,
     ) -> str:
-        provider = self.context.get_using_provider(umo=event.unified_msg_origin)
-        provider_id = str(getattr(provider, "provider_config", {}).get("id") or "")
+        provider_id = self._get_review_provider_id(event)
         if not provider_id:
             return ""
         row = match.row
@@ -527,17 +675,24 @@ class MuvLuvFeedbackPlugin(Star):
             f"- {item.get('source')} => {item.get('target')} ({item.get('category')}) {item.get('note')}"
             for item in glossary
         ) or "无"
+        context_text = self._format_row_context(row)
         prompt = (
-            "你是 Muv-Luv 汉化翻译反馈判定助手。必须只基于 JP 原文判断，不使用英文兜底。\n"
+            "你是 Muv-Luv 汉化翻译反馈判定助手。原始语义必须只基于 JP 原文和日文上下文判断，不使用英文兜底。\n"
+            "你需要结合发言人性格、说话语气、人物关系、故事梗概、当前场景和前后文来判断当前 CN 是否合适。\n"
+            "不要因为中文和 JP 字面不逐字对应就轻易判错；只有语义、语气、人物称谓、术语或上下文确实不合适时才建议修改。\n"
             "请输出简洁结论，格式必须包含以下四行：\n"
-            "判定：需要修改/不需要修改/定位不足\n"
+            "判定：需要修改/不需要修改/疑问/定位不足\n"
             "理由：...\n"
             "建议CN：如果不需要修改则写“无”\n"
             "交给：TDA00/TDA01/TDA02/TDA03/术语表/无需处理\n\n"
             f"群友反馈或截图 OCR：\n{raw_feedback}\n\n"
             f"定位：{row.key}\n"
+            f"ParaTranz ID：{row.paratranz_id or '未知'}\n"
+            f"发言人：{row.speaker_jp or '旁白/未知'}\n"
+            f"场景：{row.scene or row.egpack}\n"
             f"JP：{row.jp_text}\n"
             f"当前CN：{row.cn_text}\n"
+            f"上下文与人物资料：\n{context_text}\n"
             f"相关术语：\n{glossary_text}\n"
         )
         try:
@@ -557,8 +712,7 @@ class MuvLuvFeedbackPlugin(Star):
         event: AstrMessageEvent,
         located: list[tuple[str, MatchResult]],
     ) -> dict[str, str]:
-        provider = self.context.get_using_provider(umo=event.unified_msg_origin)
-        provider_id = str(getattr(provider, "provider_config", {}).get("id") or "")
+        provider_id = self._get_review_provider_id(event)
         if not provider_id:
             return {}
 
@@ -576,19 +730,24 @@ class MuvLuvFeedbackPlugin(Star):
                     [
                         f"### ITEM {index}",
                         f"KEY：{row.key}",
+                        f"ParaTranz ID：{row.paratranz_id or '未知'}",
                         f"反馈句：{unit}",
+                        f"发言人：{row.speaker_jp or '旁白/未知'}",
+                        f"场景：{row.scene or row.egpack}",
                         f"JP：{row.jp_text}",
                         f"当前CN：{row.cn_text}",
+                        f"上下文与人物资料：{self._format_row_context(row, compact=True)}",
                         f"相关术语：{glossary_text}",
                     ]
                 )
             )
 
         prompt = (
-            "你是 Muv-Luv 汉化翻译反馈判定助手。必须只基于 JP 原文判断，不使用英文兜底。\n"
+            "你是 Muv-Luv 汉化翻译反馈判定助手。原始语义必须只基于 JP 原文和日文上下文判断，不使用英文兜底。\n"
+            "你需要结合发言人性格、说话语气、人物关系、故事梗概、当前场景和前后文来判断当前 CN 是否合适。\n"
             "下面有多条已定位台词，请逐条判定。每条必须严格按格式输出：\n"
             "### ITEM 序号\n"
-            "判定：需要修改/不需要修改/定位不足\n"
+            "判定：需要修改/不需要修改/疑问/定位不足\n"
             "理由：...\n"
             "建议CN：如果不需要修改则写“无”\n"
             "交给：TDA00/TDA01/TDA02/TDA03/术语表/无需处理\n\n"
@@ -637,7 +796,10 @@ class MuvLuvFeedbackPlugin(Star):
             "定位到了。",
             f"章节：{row.chapter}",
             f"id：{row.row_id}",
+            f"ParaTranz ID：{row.paratranz_id or '未知'}",
             f"egpack：{row.egpack}",
+            f"scene：{row.scene or '未知'}",
+            f"speaker：{row.speaker_jp or '旁白/未知'}",
             f"CSV行：{row.csv_line}",
             "",
             f"JP：\n{clean_game_text(row.jp_text)}",
@@ -687,7 +849,10 @@ class MuvLuvFeedbackPlugin(Star):
                 [
                     "",
                     f"{index}. {row.chapter} / {row.row_id} / CSV行{row.csv_line}",
+                    f"ParaTranz ID：{row.paratranz_id or '未知'}",
                     f"egpack：{row.egpack}",
+                    f"scene：{row.scene or '未知'}",
+                    f"speaker：{row.speaker_jp or '旁白/未知'}",
                     f"反馈句：{unit}",
                     f"JP：{clean_game_text(row.jp_text)}",
                     f"当前CN：{clean_game_text(row.cn_text)}",
@@ -712,25 +877,337 @@ class MuvLuvFeedbackPlugin(Star):
             row = match.row
             lines.append(
                 f"{index}. {row.chapter} {row.row_id} 行{row.csv_line}\n"
+                f"ParaTranz ID：{row.paratranz_id or '未知'}\n"
                 f"egpack：{row.egpack}\n"
+                f"speaker：{row.speaker_jp or '旁白/未知'}\n"
                 f"JP：{clean_game_text(row.jp_text)}\n"
                 f"CN：{clean_game_text(row.cn_text)}"
             )
         return "\n\n".join(lines)
 
+    def _format_row_context(self, row: TranslationRow, compact: bool = False) -> str:
+        context_rows = self.index.context_window(row, before=3, after=3)
+        context_lines = []
+        for item in context_rows:
+            marker = "=> " if item.key == row.key else "   "
+            speaker = item.speaker_jp or "旁白/未知"
+            context_lines.append(
+                f"{marker}{item.call_order} [{speaker}] JP:{clean_game_text(item.jp_text)} CN:{clean_game_text(item.cn_text)}"
+            )
+
+        scene_info = self._lookup_scene_context(row)
+        speaker_info = self._lookup_speaker_profile(row.speaker_jp)
+        relationship_info = self._lookup_relationships(row.speaker_jp)
+        blocks = []
+        if scene_info:
+            blocks.append(f"场景资料：{scene_info}")
+        if speaker_info:
+            blocks.append(f"人物资料：{speaker_info}")
+        if relationship_info:
+            blocks.append(f"人物关系：{relationship_info}")
+        if context_lines:
+            prefix = "前后文：" if not compact else "前后文："
+            blocks.append(prefix + (" / ".join(context_lines) if compact else "\n" + "\n".join(context_lines)))
+        return "\n".join(blocks) if blocks else "无"
+
+    def _lookup_scene_context(self, row: TranslationRow) -> str:
+        for record in read_csv_records(self.scene_context_path):
+            if str(record.get("chapter", "")).strip() != row.chapter:
+                continue
+            if str(record.get("egpack", "")).strip() != row.egpack:
+                continue
+            start = safe_int(record.get("call_order_start", ""), 0)
+            end = safe_int(record.get("call_order_end", ""), 0)
+            if start and end and not (start <= row.call_order <= end):
+                continue
+            return compact_record(
+                record,
+                ["scene_label", "place", "story_summary", "mood", "context_note"],
+            )
+        return ""
+
+    def _lookup_speaker_profile(self, speaker_jp: str) -> str:
+        if not speaker_jp:
+            return ""
+        for record in read_csv_records(self.speaker_profile_path):
+            if str(record.get("speaker_jp", "")).strip() == speaker_jp:
+                return compact_record(
+                    record,
+                    ["speaker_cn", "personality", "tone", "relationship_notes", "speech_style", "translation_notes"],
+                )
+        return ""
+
+    def _lookup_relationships(self, speaker_jp: str, limit: int = 4) -> str:
+        if not speaker_jp:
+            return ""
+        hits = []
+        for record in read_csv_records(self.relationship_path):
+            left = str(record.get("speaker_a", "")).strip()
+            right = str(record.get("speaker_b", "")).strip()
+            if speaker_jp not in {left, right}:
+                continue
+            hits.append(compact_record(record, ["speaker_a", "speaker_b", "relationship", "chapter_scope", "notes"]))
+            if len(hits) >= limit:
+                break
+        return "；".join(item for item in hits if item)
+
+    def _apply_review_result(
+        self,
+        event: AstrMessageEvent,
+        raw_feedback: str,
+        image_text: str,
+        match: MatchResult,
+        decision: str,
+        suggested_cn: str,
+        reason: str,
+    ) -> str:
+        row = match.row
+        self._mark_catalog_checked(row, qq_checked=True)
+        if is_already_processed_decision(decision) or is_locate_insufficient_decision(decision):
+            return ""
+
+        if is_need_fix_decision(decision) and is_valid_suggested_cn(suggested_cn):
+            updated = self._update_compare_row(
+                row,
+                new_cn=suggested_cn,
+                review_status="FIXED_BY_FEEDBACK",
+                audit_flag="QQ_FEEDBACK_FIXED",
+            )
+            self._append_resolution_record(
+                row=row,
+                status="modified",
+                old_cn=row.cn_text,
+                new_cn=suggested_cn,
+                decision=decision,
+                reason=reason,
+                handoff_target=row.chapter,
+                note=f"QQ反馈：{raw_feedback}",
+            )
+            self._append_sync_task(
+                row=row,
+                action="update_translation",
+                old_cn=row.cn_text,
+                new_cn=suggested_cn,
+                decision=decision,
+                reason=reason,
+            )
+            if updated:
+                row.cn_text = suggested_cn
+                row.cn_norm = normalize_text(suggested_cn)
+                row.review_status = "FIXED_BY_FEEDBACK"
+                row.audit_flags = append_flag(row.audit_flags, "QQ_FEEDBACK_FIXED")
+                self._mark_catalog_checked(row, qq_checked=True, review_status="FIXED_BY_FEEDBACK")
+                return "本地处理：已更新 compare 表；ParaTranz 修改任务已生成。"
+            return "本地处理：生成了修改任务，但 compare 表写入失败，请看日志。"
+
+        if is_question_decision(decision):
+            updated = self._update_compare_row(
+                row,
+                review_status="QUESTION",
+                audit_flag="QQ_FEEDBACK_QUESTION",
+            )
+            self._append_resolution_record(
+                row=row,
+                status="question",
+                old_cn=row.cn_text,
+                new_cn="",
+                decision=decision,
+                reason=reason,
+                handoff_target=row.chapter,
+                note=f"QQ反馈：{raw_feedback}",
+            )
+            self._append_sync_task(
+                row=row,
+                action="mark_question",
+                old_cn=row.cn_text,
+                new_cn="",
+                decision=decision,
+                reason=reason,
+            )
+            if updated:
+                row.review_status = "QUESTION"
+                row.audit_flags = append_flag(row.audit_flags, "QQ_FEEDBACK_QUESTION")
+                self._mark_catalog_checked(row, qq_checked=True, review_status="QUESTION")
+                return "本地处理：已在 compare 表标记 QUESTION；ParaTranz 疑问任务已生成。"
+            return "本地处理：生成了疑问任务，但 compare 表写入失败，请看日志。"
+
+        if is_no_change_decision(decision):
+            self._append_resolution_record(
+                row=row,
+                status="无需处理",
+                old_cn=row.cn_text,
+                new_cn="",
+                decision=decision,
+                reason=reason,
+                handoff_target="无需处理",
+                note=f"QQ反馈：{raw_feedback}",
+            )
+            self._update_compare_row(row, audit_flag="QQ_FEEDBACK_CHECKED")
+            row.audit_flags = append_flag(row.audit_flags, "QQ_FEEDBACK_CHECKED")
+            self._mark_catalog_checked(row, qq_checked=True)
+            return "本地处理：已记录检查结果。"
+
+        return ""
+
+    def _update_compare_row(
+        self,
+        row: TranslationRow,
+        new_cn: str | None = None,
+        review_status: str | None = None,
+        audit_flag: str | None = None,
+    ) -> bool:
+        path = Path(row.source_file)
+        if not path.exists():
+            logger.warning("[muvluv_feedback] compare table missing: %s", path)
+            return False
+        try:
+            with path.open("r", encoding="utf-8-sig", newline="") as handle:
+                reader = csv.DictReader(handle)
+                fieldnames = list(reader.fieldnames or [])
+                records = list(reader)
+            required = {"id", "egpack", "jp_text", "cn_text"}
+            if not required.issubset(set(fieldnames)):
+                logger.warning("[muvluv_feedback] skip non-compare CSV update: %s", path)
+                return False
+            for extra_field in ("review_status", "audit_flags"):
+                if extra_field not in fieldnames:
+                    fieldnames.append(extra_field)
+
+            changed = False
+            for record in records:
+                if str(record.get("id", "")).strip() != row.row_id:
+                    continue
+                if str(record.get("egpack", "")).strip() != row.egpack:
+                    continue
+                if normalize_text(record.get("jp_text", "")) != row.jp_norm:
+                    continue
+                if new_cn is not None:
+                    record["cn_text"] = new_cn
+                if review_status:
+                    record["review_status"] = review_status
+                if audit_flag:
+                    record["audit_flags"] = append_flag(record.get("audit_flags", ""), audit_flag)
+                changed = True
+                break
+            if not changed:
+                return False
+
+            tmp_path = path.with_suffix(path.suffix + ".tmp")
+            with tmp_path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(records)
+            os.replace(tmp_path, path)
+            return True
+        except Exception as exc:
+            logger.error("[muvluv_feedback] failed to update compare row %s: %s", row.key, exc)
+            return False
+
     def _ensure_queue_file(self) -> None:
-        if self.queue_path.exists():
-            return
-        with self.queue_path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=QUEUE_FIELDS)
-            writer.writeheader()
+        ensure_csv_file(self.queue_path, QUEUE_FIELDS)
 
     def _ensure_resolution_file(self) -> None:
-        if self.resolution_path.exists():
+        ensure_csv_file(self.resolution_path, RESOLUTION_FIELDS)
+
+    def _ensure_catalog_file(self, refresh: bool = False) -> None:
+        ensure_csv_file(self.catalog_path, CATALOG_FIELDS)
+        if self.catalog_path.exists() and not refresh and count_csv_rows(self.catalog_path) > 0:
             return
-        with self.resolution_path.open("w", encoding="utf-8-sig", newline="") as handle:
-            writer = csv.DictWriter(handle, fieldnames=RESOLUTION_FIELDS)
-            writer.writeheader()
+        existing = {
+            str(record.get("key", "")): record
+            for record in read_csv_records(self.catalog_path)
+            if str(record.get("key", "")).strip()
+        }
+        records = []
+        for row in self.index.rows:
+            old = existing.get(row.key, {})
+            records.append(
+                {
+                    "chapter": row.chapter,
+                    "call_order": row.call_order,
+                    "id": row.row_id,
+                    "egpack": row.egpack,
+                    "scene": row.scene,
+                    "speaker_jp": row.speaker_jp,
+                    "jp_text": row.jp_text,
+                    "cn_text": row.cn_text,
+                    "review_status": row.review_status,
+                    "audit_flags": row.audit_flags,
+                    "paratranz_id": row.paratranz_id,
+                    "qq_feedback_checked": old.get("qq_feedback_checked", ""),
+                    "paratranz_question_checked": old.get("paratranz_question_checked", ""),
+                    "last_local_update": old.get("last_local_update", ""),
+                    "key": row.key,
+                    "source_file": row.source_file,
+                }
+            )
+        write_csv_records(self.catalog_path, CATALOG_FIELDS, records)
+
+    def _ensure_sync_task_file(self) -> None:
+        ensure_csv_file(self.sync_task_path, SYNC_TASK_FIELDS)
+
+    def _ensure_speaker_profile_file(self, refresh: bool = False) -> None:
+        ensure_csv_file(self.speaker_profile_path, SPEAKER_PROFILE_FIELDS)
+        existing = {
+            str(record.get("speaker_jp", "")): record
+            for record in read_csv_records(self.speaker_profile_path)
+            if str(record.get("speaker_jp", "")).strip()
+        }
+        speakers = sorted({row.speaker_jp for row in self.index.rows if row.speaker_jp})
+        if not refresh and existing and all(speaker in existing for speaker in speakers):
+            return
+        records = []
+        for speaker in speakers:
+            old = existing.get(speaker, {})
+            records.append(
+                {
+                    "speaker_jp": speaker,
+                    "speaker_cn": old.get("speaker_cn", ""),
+                    "personality": old.get("personality", ""),
+                    "tone": old.get("tone", ""),
+                    "relationship_notes": old.get("relationship_notes", ""),
+                    "speech_style": old.get("speech_style", ""),
+                    "translation_notes": old.get("translation_notes", ""),
+                }
+            )
+        write_csv_records(self.speaker_profile_path, SPEAKER_PROFILE_FIELDS, records)
+
+    def _ensure_scene_context_file(self, refresh: bool = False) -> None:
+        ensure_csv_file(self.scene_context_path, SCENE_CONTEXT_FIELDS)
+        existing = {
+            (str(record.get("chapter", "")), str(record.get("egpack", ""))): record
+            for record in read_csv_records(self.scene_context_path)
+            if str(record.get("chapter", "")).strip() and str(record.get("egpack", "")).strip()
+        }
+        grouped: dict[tuple[str, str], list[TranslationRow]] = {}
+        for row in self.index.rows:
+            grouped.setdefault((row.chapter, row.egpack), []).append(row)
+        if not refresh and existing and all(key in existing for key in grouped):
+            return
+        records = []
+        for key, rows in sorted(grouped.items(), key=lambda item: (item[0][0], min(row.call_order for row in item[1]))):
+            chapter, egpack = key
+            old = existing.get(key, {})
+            first = min(row.call_order for row in rows)
+            last = max(row.call_order for row in rows)
+            scene_label = old.get("scene_label", "") or rows[0].scene or egpack
+            records.append(
+                {
+                    "chapter": chapter,
+                    "egpack": egpack,
+                    "call_order_start": old.get("call_order_start", "") or first,
+                    "call_order_end": old.get("call_order_end", "") or last,
+                    "scene_label": scene_label,
+                    "place": old.get("place", ""),
+                    "story_summary": old.get("story_summary", ""),
+                    "mood": old.get("mood", ""),
+                    "context_note": old.get("context_note", ""),
+                }
+            )
+        write_csv_records(self.scene_context_path, SCENE_CONTEXT_FIELDS, records)
+
+    def _ensure_relationship_file(self) -> None:
+        ensure_csv_file(self.relationship_path, RELATIONSHIP_FIELDS)
 
     def _append_queue(
         self,
@@ -753,9 +1230,13 @@ class MuvLuvFeedbackPlugin(Star):
             "image_ocr_text": image_text,
             "chapter": row.chapter if row else "",
             "egpack": row.egpack if row else "",
+            "scene": row.scene if row else "",
+            "speaker_jp": row.speaker_jp if row else "",
             "id": row.row_id if row else "",
             "key": row.key if row else "",
             "csv_line": row.csv_line if row else "",
+            "call_order": row.call_order if row else "",
+            "paratranz_id": row.paratranz_id if row else "",
             "jp_text": row.jp_text if row else "",
             "current_cn": row.cn_text if row else "",
             "decision": decision,
@@ -766,10 +1247,109 @@ class MuvLuvFeedbackPlugin(Star):
         }
         try:
             with self.queue_path.open("a", encoding="utf-8-sig", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=QUEUE_FIELDS)
+                writer = csv.DictWriter(handle, fieldnames=QUEUE_FIELDS, extrasaction="ignore")
                 writer.writerow(item)
         except Exception as exc:
             logger.error("[muvluv_feedback] failed to append queue: %s", exc)
+
+    def _append_resolution_record(
+        self,
+        row: TranslationRow,
+        status: str,
+        old_cn: str,
+        new_cn: str,
+        decision: str,
+        reason: str,
+        handoff_target: str,
+        note: str = "",
+    ) -> None:
+        ensure_csv_file(self.resolution_path, RESOLUTION_FIELDS)
+        item = {
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "status": status,
+            "key": row.key,
+            "source_file": Path(row.source_file).name,
+            "jp_text": row.jp_text,
+            "old_cn": old_cn,
+            "new_cn": new_cn,
+            "decision": decision,
+            "reason": reason,
+            "handoff_target": handoff_target,
+            "paratranz_id": row.paratranz_id,
+            "note": note,
+        }
+        try:
+            with self.resolution_path.open("a", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=RESOLUTION_FIELDS, extrasaction="ignore")
+                writer.writerow(item)
+        except Exception as exc:
+            logger.error("[muvluv_feedback] failed to append resolution: %s", exc)
+
+    def _append_sync_task(
+        self,
+        row: TranslationRow,
+        action: str,
+        old_cn: str,
+        new_cn: str,
+        decision: str,
+        reason: str,
+    ) -> None:
+        ensure_csv_file(self.sync_task_path, SYNC_TASK_FIELDS)
+        item = {
+            "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "chapter": row.chapter,
+            "id": row.row_id,
+            "key": row.key,
+            "egpack": row.egpack,
+            "paratranz_id": row.paratranz_id,
+            "jp_text": row.jp_text,
+            "old_cn": old_cn,
+            "new_cn": new_cn,
+            "action": action,
+            "decision": decision,
+            "reason": reason,
+            "sync_status": "pending",
+            "paratranz_current_cn": "",
+            "last_editor": "",
+            "history_note": "",
+            "synced_at": "",
+        }
+        try:
+            with self.sync_task_path.open("a", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=SYNC_TASK_FIELDS, extrasaction="ignore")
+                writer.writerow(item)
+        except Exception as exc:
+            logger.error("[muvluv_feedback] failed to append sync task: %s", exc)
+
+    def _mark_catalog_checked(
+        self,
+        row: TranslationRow,
+        qq_checked: bool = False,
+        paratranz_question_checked: bool | None = None,
+        review_status: str | None = None,
+    ) -> None:
+        ensure_csv_file(self.catalog_path, CATALOG_FIELDS)
+        records = read_csv_records(self.catalog_path)
+        if not records:
+            return
+        now = time.strftime("%Y-%m-%d %H:%M:%S")
+        changed = False
+        for record in records:
+            if str(record.get("key", "")).strip() != row.key:
+                continue
+            if qq_checked:
+                record["qq_feedback_checked"] = now
+            if paratranz_question_checked is not None:
+                record["paratranz_question_checked"] = now if paratranz_question_checked else ""
+            if review_status:
+                record["review_status"] = review_status
+            record["cn_text"] = row.cn_text
+            record["audit_flags"] = row.audit_flags
+            record["last_local_update"] = now
+            changed = True
+            break
+        if changed:
+            write_csv_records(self.catalog_path, CATALOG_FIELDS, records)
 
     def _str(self, key: str, default: str) -> str:
         value = self.config.get(key, default)
@@ -791,6 +1371,18 @@ class MuvLuvFeedbackPlugin(Star):
             return [str(item) for item in value if str(item).strip()]
         return default
 
+    def _dict_int(self, key: str, default: dict[str, int]) -> dict[str, int]:
+        value = self.config.get(key, default)
+        if not isinstance(value, dict):
+            return default
+        result: dict[str, int] = {}
+        for item_key, item_value in value.items():
+            try:
+                result[str(item_key).upper()] = int(item_value)
+            except (TypeError, ValueError):
+                continue
+        return result or default
+
 
 QUEUE_FIELDS = [
     "created_at",
@@ -802,9 +1394,13 @@ QUEUE_FIELDS = [
     "image_ocr_text",
     "chapter",
     "egpack",
+    "scene",
+    "speaker_jp",
     "id",
     "key",
     "csv_line",
+    "call_order",
+    "paratranz_id",
     "jp_text",
     "current_cn",
     "decision",
@@ -828,6 +1424,191 @@ RESOLUTION_FIELDS = [
     "paratranz_id",
     "note",
 ]
+
+CATALOG_FIELDS = [
+    "chapter",
+    "call_order",
+    "id",
+    "egpack",
+    "scene",
+    "speaker_jp",
+    "jp_text",
+    "cn_text",
+    "review_status",
+    "audit_flags",
+    "paratranz_id",
+    "qq_feedback_checked",
+    "paratranz_question_checked",
+    "last_local_update",
+    "key",
+    "source_file",
+]
+
+SYNC_TASK_FIELDS = [
+    "created_at",
+    "chapter",
+    "id",
+    "key",
+    "egpack",
+    "paratranz_id",
+    "jp_text",
+    "old_cn",
+    "new_cn",
+    "action",
+    "decision",
+    "reason",
+    "sync_status",
+    "paratranz_current_cn",
+    "last_editor",
+    "history_note",
+    "synced_at",
+]
+
+SPEAKER_PROFILE_FIELDS = [
+    "speaker_jp",
+    "speaker_cn",
+    "personality",
+    "tone",
+    "relationship_notes",
+    "speech_style",
+    "translation_notes",
+]
+
+SCENE_CONTEXT_FIELDS = [
+    "chapter",
+    "egpack",
+    "call_order_start",
+    "call_order_end",
+    "scene_label",
+    "place",
+    "story_summary",
+    "mood",
+    "context_note",
+]
+
+RELATIONSHIP_FIELDS = [
+    "speaker_a",
+    "speaker_b",
+    "relationship",
+    "chapter_scope",
+    "notes",
+]
+
+
+def infer_chapter_from_path(path: Path) -> str:
+    match = re.search(r"TDA\d{2}", path.name, flags=re.I)
+    return match.group(0).upper() if match else ""
+
+
+def safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return default
+
+
+def compute_paratranz_id(chapter: str, call_order: int, bases: dict[str, int]) -> str:
+    base = bases.get(str(chapter).upper())
+    if not base or call_order <= 0:
+        return ""
+    return str(base + call_order - 1)
+
+
+def read_csv_records(path: Path) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            return [
+                {str(key): str(value or "") for key, value in record.items()}
+                for record in csv.DictReader(handle)
+            ]
+    except Exception as exc:
+        logger.warning("[muvluv_feedback] failed to read CSV %s: %s", path, exc)
+        return []
+
+
+def write_csv_records(path: Path, fieldnames: list[str], records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for record in records:
+            writer.writerow(record)
+    os.replace(tmp_path, path)
+
+
+def ensure_csv_file(path: Path, fieldnames: list[str]) -> None:
+    if not path.exists():
+        write_csv_records(path, fieldnames, [])
+        return
+    records = read_csv_records(path)
+    existing_fields: list[str] = []
+    try:
+        with path.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            existing_fields = list(reader.fieldnames or [])
+    except Exception:
+        existing_fields = []
+    merged_fields = list(fieldnames)
+    for field in existing_fields:
+        if field not in merged_fields:
+            merged_fields.append(field)
+    if merged_fields != existing_fields:
+        write_csv_records(path, merged_fields, records)
+
+
+def count_csv_rows(path: Path) -> int:
+    return len(read_csv_records(path))
+
+
+def append_flag(current: str, flag: str) -> str:
+    parts = [item.strip() for item in re.split(r"[;；,，|]+", str(current or "")) if item.strip()]
+    if flag and flag not in parts:
+        parts.append(flag)
+    return ";".join(parts)
+
+
+def compact_record(record: dict[str, str], fields: list[str]) -> str:
+    parts = []
+    for field in fields:
+        value = str(record.get(field, "")).strip()
+        if value:
+            parts.append(f"{field}={value}")
+    return "；".join(parts)
+
+
+def is_valid_suggested_cn(text: str) -> bool:
+    value = str(text or "").strip()
+    return bool(value and value not in {"无", "なし", "不需要", "无需", "-"})
+
+
+def is_need_fix_decision(decision: str) -> bool:
+    norm = normalize_text(decision)
+    if "不需要修改" in norm or "无需修改" in norm or "无需处理" in norm:
+        return False
+    return "需要修改" in norm or "建议修改" in norm or "应修改" in norm
+
+
+def is_no_change_decision(decision: str) -> bool:
+    norm = normalize_text(decision)
+    return "不需要修改" in norm or "无需修改" in norm or "无需处理" in norm
+
+
+def is_question_decision(decision: str) -> bool:
+    norm = normalize_text(decision)
+    return "疑问" in norm or "不确定" in norm or "人工确认" in norm or "需确认" in norm
+
+
+def is_locate_insufficient_decision(decision: str) -> bool:
+    return "定位不足" in normalize_text(decision)
+
+
+def is_already_processed_decision(decision: str) -> bool:
+    norm = normalize_text(decision)
+    return "已处理过" in norm or "已处理" in norm or "已修改" in norm
+
 
 FOCUS_STOP_WORDS = (
     "这里是不是有问题",
@@ -1247,6 +2028,10 @@ def resolution_record_matches(record: dict[str, str], row: TranslationRow) -> bo
         "已修改",
         "已应用",
         "无需处理",
+        "question",
+        "疑问",
+        "待确认",
+        "需确认",
     }:
         return False
     return True
@@ -1256,6 +2041,8 @@ def format_resolution_review(record: dict[str, str]) -> str:
     new_cn = str(record.get("new_cn", "")).strip() or "无"
     reason = str(record.get("reason", "")).strip() or "反馈记录表已有对应处理记录。"
     handoff = str(record.get("handoff_target", "")).strip() or "无需处理"
+    status = str(record.get("status", "")).strip().lower()
+    decision = "疑问" if status in {"question", "疑问", "待确认", "需确认"} else "已处理过"
     note = str(record.get("note", "")).strip()
     paratranz_id = str(record.get("paratranz_id", "")).strip()
     extra = []
@@ -1265,7 +2052,7 @@ def format_resolution_review(record: dict[str, str]) -> str:
         extra.append(f"备注：{note}")
     suffix = "\n" + "\n".join(extra) if extra else ""
     return (
-        "判定：已处理过\n"
+        f"判定：{decision}\n"
         f"理由：{reason}\n"
         f"建议CN：{new_cn}\n"
         f"交给：{handoff}"
