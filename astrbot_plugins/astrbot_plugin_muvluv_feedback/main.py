@@ -65,6 +65,17 @@ class MatchResult:
     matched_field: str
 
 
+@dataclass
+class ReviewDetails:
+    intent: str = ""
+    decision: str = ""
+    action: str = ""
+    suggested_cn: str = ""
+    reason: str = ""
+    reply: str = ""
+    handoff: str = ""
+
+
 class TranslationIndex:
     def __init__(
         self,
@@ -487,26 +498,25 @@ class MuvLuvFeedbackPlugin(Star):
         reviews = await self._review_located_items(event, located, combined_text)
         for unit, match in located:
             review = reviews.get(match.row.key, "")
-            decision, suggested_cn, reason = parse_review_fields(review)
+            details = parse_review_details(review)
             side_effect_note = self._apply_review_result(
                 event=event,
                 raw_feedback=unit,
                 image_text=image_text,
                 match=match,
-                decision=decision,
-                suggested_cn=suggested_cn,
-                reason=reason or review,
+                details=details,
             )
             if side_effect_note:
                 review = f"{review}\n{side_effect_note}" if review else side_effect_note
+                details = parse_review_details(review)
             self._append_queue(
                 event=event,
                 raw_feedback=unit,
                 image_text=image_text,
                 match=match,
-                decision=decision or "已定位",
-                suggested_cn=suggested_cn,
-                reason=reason or review,
+                decision=details.decision or details.action or "已定位",
+                suggested_cn=details.suggested_cn,
+                reason=details.reason or details.reply or review,
             )
             resolved.append((unit, match, review))
 
@@ -737,13 +747,19 @@ class MuvLuvFeedbackPlugin(Star):
         prompt = (
             "你是 Muv-Luv 汉化翻译反馈判定助手。原始语义必须只基于 JP 原文和日文上下文判断，不使用英文兜底。\n"
             "你需要结合发言人性格、说话语气、人物关系、故事梗概、当前场景和前后文来判断当前 CN 是否合适。\n"
-            "不要因为中文和 JP 字面不逐字对应就轻易判错；只有语义、语气、人物称谓、术语或上下文确实不合适时才建议修改。\n"
-            "必须优先回应群友反馈文字里的具体疑点；如果群友问“某个词/地名/比喻能不能形容人、是否通顺、是否更合适”，理由必须正面回答这个疑点，不能只解释 JP 大意。\n"
-            "当 JP 语义基本正确但当前 CN 的中文表达生硬、误导、过度概括或没有回应截图外文字疑点时，可以判定为需要修改并给出更自然的 CN。\n"
-            "请输出简洁结论，格式必须包含以下四行：\n"
+            "先判断用户意图：提出改法、询问词语/术语是否恰当、询问自然度、泛泛报错、只要定位、或信息不足。\n"
+            "图片负责定位台词；用户文字负责决定任务。必须优先回应用户文字里的具体疑点，不能只解释 JP 大意。\n"
+            "如果用户提出“X 改成 Y”，你要判断 Y 对不对：对就采纳；不对就说明不建议，并给更好改法或维持原文。\n"
+            "如果用户问“X 恰不恰当/能不能形容人/通不通顺”，要自然解释恰当性，并在不恰当时给建议 CN。\n"
+            "不要因为中文和 JP 字面不逐字对应就轻易判错；但如果当前 CN 生硬、误导、过度概括、术语不当、没回应用户疑点，可以判定需要修改。\n"
+            "解决不了或需要人工结合更大剧情时，判定疑问，不要硬改。\n"
+            "请输出可解析字段；答复要像正常翻译助手自然回答，不要写成表格说明：\n"
+            "意图：propose_change/ask_term/ask_naturalness/report_error/locate_only/unclear\n"
             "判定：需要修改/不需要修改/疑问/定位不足\n"
-            "理由：...\n"
+            "动作：update_translation/no_change/mark_question/locate_only\n"
+            "理由：简短说明，必须正面回应用户疑点\n"
             "建议CN：如果不需要修改则写“无”\n"
+            "答复：给群友看的自然回答，1-4句话；需要时评价用户提出的改法是否合适\n"
             "交给：TDA00/TDA01/TDA02/TDA03/术语表/无需处理\n\n"
             f"群友反馈或截图 OCR：\n{raw_feedback}\n\n"
             f"用户完整反馈（含文字说明和OCR）：\n{full_feedback or raw_feedback}\n\n"
@@ -807,13 +823,20 @@ class MuvLuvFeedbackPlugin(Star):
         prompt = (
             "你是 Muv-Luv 汉化翻译反馈判定助手。原始语义必须只基于 JP 原文和日文上下文判断，不使用英文兜底。\n"
             "你需要结合发言人性格、说话语气、人物关系、故事梗概、当前场景和前后文来判断当前 CN 是否合适。\n"
-            "必须优先回应群友完整反馈文字里的具体疑点；如果群友问“某个词/地名/比喻能不能形容人、是否通顺、是否更合适”，理由必须正面回答这个疑点，不能只解释 JP 大意。\n"
-            "当 JP 语义基本正确但当前 CN 的中文表达生硬、误导、过度概括或没有回应截图外文字疑点时，可以判定为需要修改并给出更自然的 CN。\n"
+            "先判断用户意图：提出改法、询问词语/术语是否恰当、询问自然度、泛泛报错、只要定位、或信息不足。\n"
+            "图片负责定位台词；用户文字负责决定任务。必须优先回应用户完整反馈文字里的具体疑点，不能只解释 JP 大意。\n"
+            "如果用户提出“X 改成 Y”，你要判断 Y 对不对：对就采纳；不对就说明不建议，并给更好改法或维持原文。\n"
+            "如果用户问“X 恰不恰当/能不能形容人/通不通顺”，要自然解释恰当性，并在不恰当时给建议 CN。\n"
+            "不要因为中文和 JP 字面不逐字对应就轻易判错；但如果当前 CN 生硬、误导、过度概括、术语不当、没回应用户疑点，可以判定需要修改。\n"
+            "解决不了或需要人工结合更大剧情时，判定疑问，不要硬改。\n"
             "下面有多条已定位台词，请逐条判定。每条必须严格按格式输出：\n"
             "### ITEM 序号\n"
+            "意图：propose_change/ask_term/ask_naturalness/report_error/locate_only/unclear\n"
             "判定：需要修改/不需要修改/疑问/定位不足\n"
+            "动作：update_translation/no_change/mark_question/locate_only\n"
             "理由：...\n"
             "建议CN：如果不需要修改则写“无”\n"
+            "答复：给群友看的自然回答，1-4句话；需要时评价用户提出的改法是否合适\n"
             "交给：TDA00/TDA01/TDA02/TDA03/术语表/无需处理\n\n"
             f"用户完整反馈（含文字说明和OCR）：\n{full_feedback}\n\n"
             + "\n\n".join(item_blocks)
@@ -879,7 +902,7 @@ class MuvLuvFeedbackPlugin(Star):
             if focused_by_text:
                 parts.append("本次聚焦：根据你的文字只处理这一句。")
         if review:
-            parts.extend(["", review])
+            parts.extend(["", format_review_for_reply(review)])
         parts.extend(["", "已记录到反馈队列。"])
         return "\n".join(parts)
 
@@ -924,7 +947,7 @@ class MuvLuvFeedbackPlugin(Star):
                 ]
             )
             if review:
-                lines.append(review)
+                lines.append(format_review_for_reply(review))
 
         if missed:
             lines.extend(["", f"另有 {len(missed)} 条未定位，已忽略为上下文或 OCR 噪声。"])
@@ -1022,16 +1045,23 @@ class MuvLuvFeedbackPlugin(Star):
         raw_feedback: str,
         image_text: str,
         match: MatchResult,
-        decision: str,
-        suggested_cn: str,
-        reason: str,
+        details: ReviewDetails,
     ) -> str:
         row = match.row
+        decision = details.decision
+        action = normalize_action(details.action, decision)
+        suggested_cn = details.suggested_cn
+        reason = details.reason or details.reply
         self._mark_catalog_checked(row, qq_checked=True)
-        if is_already_processed_decision(decision) or is_locate_insufficient_decision(decision):
+        if action in {"locate_only", "already_processed"} or is_already_processed_decision(decision):
             return ""
 
-        if is_need_fix_decision(decision) and is_valid_suggested_cn(suggested_cn):
+        if action == "update_translation" and not is_valid_suggested_cn(suggested_cn):
+            action = "mark_question"
+            decision = decision or "疑问"
+            reason = (reason or "模型判断需要修改，但没有给出可用建议 CN。").strip()
+
+        if action == "update_translation" and is_valid_suggested_cn(suggested_cn):
             updated = self._update_compare_row(
                 row,
                 new_cn=suggested_cn,
@@ -1065,7 +1095,7 @@ class MuvLuvFeedbackPlugin(Star):
                 return "本地处理：已更新 compare 表；ParaTranz 修改任务已生成。"
             return "本地处理：生成了修改任务，但 compare 表写入失败，请看日志。"
 
-        if is_question_decision(decision):
+        if action == "mark_question":
             updated = self._update_compare_row(
                 row,
                 review_status="QUESTION",
@@ -1096,7 +1126,7 @@ class MuvLuvFeedbackPlugin(Star):
                 return "本地处理：已在 compare 表标记 QUESTION；ParaTranz 疑问任务已生成。"
             return "本地处理：生成了疑问任务，但 compare 表写入失败，请看日志。"
 
-        if is_no_change_decision(decision):
+        if action == "no_change":
             self._append_resolution_record(
                 row=row,
                 status="无需处理",
@@ -1957,6 +1987,9 @@ def select_focused_feedback_units(raw_text: str, units: list[str]) -> list[str]:
         return units
 
     scored.sort(key=lambda item: item[0], reverse=True)
+    if scored[0][0] >= 1000:
+        focused = {unit for score, unit in scored if score >= 1000}
+        return [unit for unit in units if unit in focused]
     if len(scored) > 1 and scored[0][0] == scored[1][0]:
         return units
     if scored[0][0] < 3:
@@ -2006,6 +2039,9 @@ def select_focused_units_by_rows(
         return select_focused_feedback_units(raw_text, units)
 
     scored.sort(key=lambda item: item[0], reverse=True)
+    if scored[0][0] >= 1000:
+        focused = {unit for score, unit in scored if score >= 1000}
+        return [unit for unit in units if unit in focused]
     if len(scored) > 1 and scored[0][0] == scored[1][0]:
         return units
     if scored[0][0] < 3:
@@ -2157,18 +2193,135 @@ def parse_batch_reviews(text: str, keys: list[str]) -> dict[str, str]:
     return reviews
 
 
-def parse_review_fields(review: str) -> tuple[str, str, str]:
-    decision = ""
-    suggested_cn = ""
-    reason = ""
+def parse_review_details(review: str) -> ReviewDetails:
+    details = ReviewDetails()
+    active_field = ""
     for line in (review or "").splitlines():
-        if line.startswith("判定：") or line.startswith("判定:"):
-            decision = line.split(":", 1)[-1] if ":" in line else line.split("：", 1)[-1]
-        elif line.startswith("建议CN：") or line.startswith("建议CN:"):
-            suggested_cn = line.split(":", 1)[-1] if ":" in line else line.split("：", 1)[-1]
-        elif line.startswith("理由：") or line.startswith("理由:"):
-            reason = line.split(":", 1)[-1] if ":" in line else line.split("：", 1)[-1]
-    return decision.strip() or "已定位", suggested_cn.strip(), reason.strip()
+        key, value = split_review_line(line)
+        if not key:
+            text = str(line or "").strip()
+            if text and active_field in {"reason", "reply"}:
+                current = getattr(details, active_field)
+                setattr(details, active_field, f"{current}\n{text}".strip())
+            continue
+        key_norm = normalize_review_key(key)
+        if key_norm in {"意图", "intent"}:
+            details.intent = value
+            active_field = "intent"
+        elif key_norm in {"判定", "decision"}:
+            details.decision = value
+            active_field = "decision"
+        elif key_norm in {"动作", "action"}:
+            details.action = value
+            active_field = "action"
+        elif key_norm in {"建议cn", "suggestedcn", "suggested_cn"}:
+            details.suggested_cn = value
+            active_field = "suggested_cn"
+        elif key_norm in {"理由", "reason"}:
+            details.reason = value
+            active_field = "reason"
+        elif key_norm in {"答复", "回复", "自然答复", "reply"}:
+            details.reply = value
+            active_field = "reply"
+        elif key_norm in {"交给", "handoff"}:
+            details.handoff = value
+            active_field = "handoff"
+        else:
+            active_field = ""
+
+    details.intent = details.intent.strip()
+    details.decision = details.decision.strip() or "已定位"
+    details.action = normalize_action(details.action, details.decision)
+    details.suggested_cn = details.suggested_cn.strip()
+    details.reason = details.reason.strip()
+    details.reply = details.reply.strip()
+    details.handoff = details.handoff.strip()
+    return details
+
+
+def parse_review_fields(review: str) -> tuple[str, str, str]:
+    details = parse_review_details(review)
+    return details.decision, details.suggested_cn, details.reason
+
+
+def split_review_line(line: str) -> tuple[str, str]:
+    text = str(line or "").strip()
+    if not text:
+        return "", ""
+    if "：" in text:
+        key, value = text.split("：", 1)
+    elif ":" in text:
+        key, value = text.split(":", 1)
+    else:
+        return "", ""
+    return key.strip(), value.strip()
+
+
+def normalize_review_key(key: str) -> str:
+    return re.sub(r"[\s　_\-]+", "", str(key or "")).strip().lower()
+
+
+def normalize_action(action: str, decision: str = "") -> str:
+    raw = str(action or "").strip().lower()
+    raw_norm = normalize_text(raw)
+    if raw_norm:
+        if "update_translation" in raw or "updatetranslation" in raw_norm or "更新" in raw_norm or "修改" in raw_norm:
+            if "不更新" not in raw_norm and "不修改" not in raw_norm and "无需" not in raw_norm:
+                return "update_translation"
+        if "mark_question" in raw or "markquestion" in raw_norm or "疑问" in raw_norm or "人工" in raw_norm or "确认" in raw_norm:
+            return "mark_question"
+        if "no_change" in raw or "nochange" in raw_norm or "不需要修改" in raw_norm or "无需修改" in raw_norm or "不更新" in raw_norm:
+            return "no_change"
+        if "locate_only" in raw or "locateonly" in raw_norm or "只定位" in raw_norm or "定位" in raw_norm:
+            return "locate_only"
+        if "already" in raw_norm or "已处理" in raw_norm:
+            return "already_processed"
+
+    if is_already_processed_decision(decision):
+        return "already_processed"
+    if is_locate_insufficient_decision(decision):
+        return "locate_only"
+    if is_question_decision(decision):
+        return "mark_question"
+    if is_no_change_decision(decision):
+        return "no_change"
+    if is_need_fix_decision(decision):
+        return "update_translation"
+    return "locate_only"
+
+
+def format_review_for_reply(review: str) -> str:
+    details = parse_review_details(review)
+    processing_notes = [
+        line.strip()
+        for line in str(review or "").splitlines()
+        if line.strip().startswith("本地处理：")
+    ]
+
+    lines: list[str] = []
+    natural = details.reply or details.reason
+    if natural:
+        lines.append(f"判断：{natural}")
+    else:
+        lines.append(f"判断：{details.decision or '已定位'}")
+
+    if is_valid_suggested_cn(details.suggested_cn):
+        lines.extend(["", f"建议CN：{details.suggested_cn}"])
+
+    if processing_notes:
+        lines.extend(["", *processing_notes])
+    else:
+        action = normalize_action(details.action, details.decision)
+        if action == "no_change":
+            lines.extend(["", "处理：不更新，已记录检查结果。"])
+        elif action == "mark_question":
+            lines.extend(["", "处理：标记为疑问，等待后续人工确认或 ParaTranz 标疑问。"])
+        elif action == "update_translation":
+            lines.extend(["", "处理：需要修改，已记录为待同步修改。"])
+        elif action == "already_processed":
+            lines.extend(["", "处理：已有处理记录。"])
+
+    return "\n".join(lines).strip()
 
 
 def resolution_record_matches(record: dict[str, str], row: TranslationRow) -> bool:
@@ -2218,6 +2371,8 @@ def format_resolution_review(record: dict[str, str]) -> str:
     handoff = str(record.get("handoff_target", "")).strip() or "无需处理"
     status = str(record.get("status", "")).strip().lower()
     decision = "疑问" if status in {"question", "疑问", "待确认", "需确认"} else "已处理过"
+    action = "mark_question" if decision == "疑问" else "already_processed"
+    reply = reason
     note = str(record.get("note", "")).strip()
     paratranz_id = str(record.get("paratranz_id", "")).strip()
     extra = []
@@ -2227,9 +2382,12 @@ def format_resolution_review(record: dict[str, str]) -> str:
         extra.append(f"备注：{note}")
     suffix = "\n" + "\n".join(extra) if extra else ""
     return (
+        f"意图：历史记录\n"
         f"判定：{decision}\n"
+        f"动作：{action}\n"
         f"理由：{reason}\n"
         f"建议CN：{new_cn}\n"
+        f"答复：{reply}\n"
         f"交给：{handoff}"
         f"{suffix}"
     )
