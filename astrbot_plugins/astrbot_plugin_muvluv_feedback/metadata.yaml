@@ -1,0 +1,7 @@
+name: astrbot_plugin_muvluv_feedback
+display_name: Muv-Luv 翻译反馈定位
+desc: 从群友反馈文本或截图中提取中文台词，定位 TDA00-03 JP/CN compare 表的 id、speaker、scene、JP 和当前 CN，并记录反馈与 ParaTranz 同步任务。
+version: v0.1.0
+author: Codex
+repo: ""
+astrbot_version: ">=4.13.0"
