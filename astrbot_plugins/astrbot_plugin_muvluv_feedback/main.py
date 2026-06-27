@@ -405,11 +405,19 @@ class MuvLuvFeedbackPlugin(Star):
         raw_text: str,
         silent_if_unmatched: bool = False,
     ) -> str | None:
+        image_refs = collect_event_image_refs(event)
         try:
-            image_text = await self._extract_image_text(event)
+            image_text = await self._extract_image_text(event, image_refs)
         except Exception as exc:
             logger.warning("[muvluv_feedback] image OCR failed: %s", exc)
             image_text = ""
+        if image_refs and not image_text:
+            if silent_if_unmatched:
+                return None
+            return (
+                "这条消息里有图片，但 OCR 没提取到可用台词。\n"
+                "请重发原图，或直接贴出截图里的中文台词。"
+            )
         combined_text = "\n".join(part for part in [raw_text, image_text] if part.strip()).strip()
         if not combined_text:
             if silent_if_unmatched:
@@ -606,8 +614,12 @@ class MuvLuvFeedbackPlugin(Star):
             f"人物关系：{self.relationship_path}"
         ).stop_event()
 
-    async def _extract_image_text(self, event: AstrMessageEvent) -> str:
-        images = [component for component in event.get_messages() if isinstance(component, Comp.Image)]
+    async def _extract_image_text(
+        self,
+        event: AstrMessageEvent,
+        image_refs: list[Any] | None = None,
+    ) -> str:
+        images = image_refs if image_refs is not None else collect_event_image_refs(event)
         if not images:
             return ""
         provider = self._get_vision_provider(event)
@@ -618,8 +630,11 @@ class MuvLuvFeedbackPlugin(Star):
         )
         outputs = []
         for index, image in enumerate(images, start=1):
-            image_ref = image.url or image.file
-            if not image_ref:
+            if isinstance(image, Comp.Image):
+                image_ref = image.url or image.file or image.path
+            else:
+                image_ref = str(image or "")
+            if not image_ref and isinstance(image, Comp.Image):
                 image_ref = await image.convert_to_file_path()
             if not image_ref:
                 continue
@@ -1666,8 +1681,101 @@ def strip_feedback_command(text: Any) -> str:
     return value
 
 
+IMAGE_FILE_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp")
+
+
 def event_has_image(event: AstrMessageEvent) -> bool:
-    return any(isinstance(component, Comp.Image) for component in event.get_messages())
+    return bool(collect_event_image_refs(event))
+
+
+def collect_event_image_refs(event: AstrMessageEvent) -> list[Any]:
+    refs: list[Any] = []
+    seen: set[str] = set()
+
+    def add_ref(ref: Any) -> None:
+        if not ref:
+            return
+        key = image_ref_key(ref)
+        if key in seen:
+            return
+        seen.add(key)
+        refs.append(ref)
+
+    for component in walk_message_components(event.get_messages()):
+        if isinstance(component, Comp.Image):
+            add_ref(component)
+            continue
+        if is_image_file_component(component):
+            ref = getattr(component, "url", None) or getattr(component, "file_", None)
+            if not ref and isinstance(component, (Comp.Image, Comp.Video, Comp.Record)):
+                ref = getattr(component, "file", None)
+            add_ref(ref)
+
+    raw_message = getattr(getattr(event, "message_obj", None), "raw_message", None)
+    for attachment in getattr(raw_message, "attachments", None) or []:
+        if not is_image_attachment(attachment):
+            continue
+        url = normalize_attachment_url(getattr(attachment, "url", None))
+        if url:
+            add_ref(url)
+
+    return refs
+
+
+def walk_message_components(components: Any):
+    for component in components or []:
+        yield component
+        reply_chain = getattr(component, "chain", None)
+        if reply_chain:
+            yield from walk_message_components(reply_chain)
+
+
+def image_ref_key(ref: Any) -> str:
+    if isinstance(ref, Comp.Image):
+        return str(ref.url or ref.file or ref.path or id(ref))
+    return str(ref)
+
+
+def is_image_file_component(component: Any) -> bool:
+    name = str(getattr(component, "name", "") or "").lower()
+    url = str(getattr(component, "url", "") or "").lower()
+    file_path = str(getattr(component, "file_", "") or "").lower()
+    if not file_path and isinstance(component, (Comp.Image, Comp.Video, Comp.Record)):
+        file_path = str(getattr(component, "file", "") or "").lower()
+    return (
+        name.endswith(IMAGE_FILE_EXTS)
+        or url_path_looks_like_image(url)
+        or file_path.endswith(IMAGE_FILE_EXTS)
+    )
+
+
+def is_image_attachment(attachment: Any) -> bool:
+    content_type = str(getattr(attachment, "content_type", "") or "").lower()
+    filename = str(
+        getattr(attachment, "filename", None)
+        or getattr(attachment, "name", None)
+        or ""
+    ).lower()
+    url = str(getattr(attachment, "url", "") or "").lower()
+    if content_type.startswith("image"):
+        return True
+    if filename.endswith(IMAGE_FILE_EXTS) or url_path_looks_like_image(url):
+        return True
+    return bool(url and not content_type and not filename)
+
+
+def normalize_attachment_url(url: Any) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://", "file://", "base64://")):
+        return text
+    return f"https://{text}"
+
+
+def url_path_looks_like_image(url: str) -> bool:
+    path = str(url or "").split("?", 1)[0].split("#", 1)[0].lower()
+    return path.endswith(IMAGE_FILE_EXTS)
 
 
 def is_event_addressed(event: AstrMessageEvent) -> bool:
@@ -1759,7 +1867,7 @@ def extract_search_fragments(text: str) -> list[str]:
 
 
 def extract_feedback_units(raw_text: str, image_text: str) -> list[str]:
-    image_units = extract_dialogue_units(image_text)
+    image_units = extract_dialogue_units(image_text, include_plain=True)
     if image_units:
         return image_units[:20]
 
@@ -1884,7 +1992,7 @@ def extract_focus_norms(raw_text: str) -> list[str]:
     return sorted(norms, key=len, reverse=True)
 
 
-def extract_dialogue_units(text: str) -> list[str]:
+def extract_dialogue_units(text: str, include_plain: bool = False) -> list[str]:
     cleaned = clean_vision_text(text)
     if not cleaned:
         return []
@@ -1895,6 +2003,7 @@ def extract_dialogue_units(text: str) -> list[str]:
         if not line:
             continue
         if "「" in line or "『" in line or "“" in line or '"' in line:
+            found = False
             for item in re.findall(
                 r"(?:[【\[][^\]】]{1,30}[】\]]\s*)?[「『“\"]([^」』”\"]{2,180})[」』”\"]",
                 line,
@@ -1904,9 +2013,11 @@ def extract_dialogue_units(text: str) -> list[str]:
                 if speaker_match:
                     speaker = speaker_match.group(1)
                 units.append(f"{speaker}「{item.strip()}」".strip())
-                break
-            else:
+                found = True
+            if not found:
                 units.append(line)
+        elif include_plain and looks_like_ocr_dialogue_line(line):
+            units.append(line)
 
     if not units:
         for item in re.findall(
@@ -1920,11 +2031,23 @@ def extract_dialogue_units(text: str) -> list[str]:
     for unit in units:
         unit = re.sub(r"^(?:Image\s*\d+|OCR|图片\d*)[:：]\s*", "", unit, flags=re.I).strip()
         norm = normalize_text(unit)
-        if len(norm) < 4 or norm in seen:
+        min_len = 2 if include_plain else 4
+        if len(norm) < min_len or norm in seen:
             continue
         seen.add(norm)
         unique.append(unit)
     return unique
+
+
+def looks_like_ocr_dialogue_line(line: str) -> bool:
+    value = re.sub(r"^(?:Image\s*\d+|OCR|图片\d*)[:：]\s*", "", str(line or ""), flags=re.I)
+    value = value.strip(" \t-:：")
+    norm = normalize_text(value)
+    if len(norm) < 2:
+        return False
+    if len(norm) <= 40 and re.search(r"[\u3040-\u30ff\u3400-\u9fff]", value):
+        return True
+    return False
 
 
 def extract_short_search_norms(text: str) -> list[str]:
